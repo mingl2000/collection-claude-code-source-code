@@ -7,6 +7,7 @@
 
 - 9:50 AM · Mar 31, 2026: [Claude code memory analysis](https://x.com/henryl_ai/status/2039022608310808965)
 - 5:41 AM · Mar 31, 2026: [Why Claude Code Outperforms Other Tools: An Analysis](https://x.com/YukerX/status/2038959908968919297)
+- 5:03 AM · Mar 31, 2026: [Anthropic's AI Coding Tool Leaks Its Own Source Code](https://www.ndtv.com/science/anthropics-ai-coding-tool-leaks-its-own-source-code-for-the-second-time-in-a-year-11291517)
 - 3:02 AM · Mar 31, 2026: [Community Reaction to the Claude Code Source Exposure](https://x.com/hank_aibtc/status/2038919948370616330)
 - 2:57 AM · Mar 31, 2026: [The code behind Claude Code](https://x.com/mal_shaik/status/2038918662489510273)
 - 1:23 AM · Mar 31, 2026: [A Viral Post on the Claude Code Source Leak](https://x.com/Fried_rice/status/2038894956459290963?s=20)
