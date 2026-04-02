@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
+from memory import get_memory_context
+
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Nano Claude Code, Created by SAIL Lab (Safe AI and Robot Learning Lab), an AI coding assistant running in the terminal.
 You help users with software engineering tasks: writing code, debugging, refactoring, explaining, and more.
@@ -91,10 +93,14 @@ def get_claude_md() -> str:
 
 def build_system_prompt() -> str:
     import platform
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    prompt = SYSTEM_PROMPT_TEMPLATE.format(
         date=datetime.now().strftime("%Y-%m-%d %A"),
         cwd=str(Path.cwd()),
         platform=platform.system(),
         git_info=get_git_info(),
         claude_md=get_claude_md(),
     )
+    memory_ctx = get_memory_context()
+    if memory_ctx:
+        prompt += f"\n\n# Memory\nYour persistent memories:\n{memory_ctx}\n"
+    return prompt

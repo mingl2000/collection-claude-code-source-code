@@ -2,9 +2,13 @@
 import os
 import re
 import glob as _glob
+import difflib
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
+
+from tool_registry import ToolDef, register_tool
+from tool_registry import execute_tool as _registry_execute
 
 # ── Tool JSON schemas (sent to Claude API) ─────────────────────────────────
 
@@ -142,6 +146,24 @@ def _is_safe_bash(cmd: str) -> bool:
     return any(c.startswith(p) for p in _SAFE_PREFIXES)
 
 
+# ── Diff helpers ──────────────────────────────────────────────────────────
+
+def generate_unified_diff(old, new, filename, context_lines=3):
+    old_lines = old.splitlines(keepends=True)
+    new_lines = new.splitlines(keepends=True)
+    diff = difflib.unified_diff(old_lines, new_lines,
+        fromfile=f"a/{filename}", tofile=f"b/{filename}", n=context_lines)
+    return "".join(diff)
+
+def maybe_truncate_diff(diff_text, max_lines=80):
+    lines = diff_text.splitlines()
+    if len(lines) <= max_lines:
+        return diff_text
+    shown = lines[:max_lines]
+    remaining = len(lines) - max_lines
+    return "\n".join(shown) + f"\n\n[... {remaining} more lines ...]"
+
+
 # ── Tool implementations ───────────────────────────────────────────────────
 
 def _read(file_path: str, limit: int = None, offset: int = None) -> str:
@@ -164,10 +186,19 @@ def _read(file_path: str, limit: int = None, offset: int = None) -> str:
 def _write(file_path: str, content: str) -> str:
     p = Path(file_path)
     try:
+        is_new = not p.exists()
+        old_content = "" if is_new else p.read_text(errors="replace")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-        lc = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
-        return f"Wrote {lc} lines to {file_path}"
+        if is_new:
+            lc = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+            return f"Created {file_path} ({lc} lines)"
+        filename = p.name
+        diff = generate_unified_diff(old_content, content, filename)
+        if not diff:
+            return f"No changes in {file_path}"
+        truncated = maybe_truncate_diff(diff)
+        return f"File updated — {file_path}:\n\n{truncated}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -184,10 +215,13 @@ def _edit(file_path: str, old_string: str, new_string: str, replace_all: bool = 
         if count > 1 and not replace_all:
             return (f"Error: old_string appears {count} times. "
                     "Provide more context to make it unique, or use replace_all=true.")
+        old_content = content
         new_content = content.replace(old_string, new_string) if replace_all else \
                       content.replace(old_string, new_string, 1)
         p.write_text(new_content)
-        return f"Replaced {'all ' + str(count) if replace_all else '1'} occurrence(s) in {file_path}"
+        filename = p.name
+        diff = generate_unified_diff(old_content, new_content, filename)
+        return f"Changes applied to {filename}:\n\n{diff}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -299,7 +333,7 @@ def _websearch(query: str) -> str:
         return f"Error: {e}"
 
 
-# ── Dispatcher ─────────────────────────────────────────────────────────────
+# ── Dispatcher (backward-compatible wrapper) ──────────────────────────────
 
 def execute_tool(
     name: str,
@@ -307,7 +341,10 @@ def execute_tool(
     permission_mode: str = "auto",
     ask_permission: Optional[Callable[[str], bool]] = None,
 ) -> str:
-    """Dispatch tool execution; ask permission for write/destructive ops."""
+    """Dispatch tool execution; ask permission for write/destructive ops.
+
+    Permission checking is done here, then delegation goes to the registry.
+    """
 
     def _check(desc: str) -> bool:
         """Return True if action is allowed."""
@@ -317,43 +354,259 @@ def execute_tool(
             return ask_permission(desc)
         return True  # headless: allow everything
 
-    if name == "Read":
-        return _read(inputs["file_path"], inputs.get("limit"), inputs.get("offset"))
-
-    elif name == "Write":
+    # --- permission gate (same logic as before) ---
+    if name == "Write":
         if not _check(f"Write to {inputs['file_path']}"):
             return "Denied: user rejected write operation"
-        return _write(inputs["file_path"], inputs["content"])
-
     elif name == "Edit":
         if not _check(f"Edit {inputs['file_path']}"):
             return "Denied: user rejected edit operation"
-        return _edit(inputs["file_path"], inputs["old_string"],
-                     inputs["new_string"], inputs.get("replace_all", False))
-
     elif name == "Bash":
         cmd = inputs["command"]
         if permission_mode != "accept-all" and not _is_safe_bash(cmd):
             if not _check(f"Bash: {cmd}"):
                 return "Denied: user rejected bash command"
-        return _bash(cmd, inputs.get("timeout", 30))
 
-    elif name == "Glob":
-        return _glob(inputs["pattern"], inputs.get("path"))
+    return _registry_execute(name, inputs, {})
 
-    elif name == "Grep":
-        return _grep(
-            inputs["pattern"], inputs.get("path"), inputs.get("glob"),
-            inputs.get("output_mode", "files_with_matches"),
-            inputs.get("case_insensitive", False),
-            inputs.get("context", 0),
-        )
 
-    elif name == "WebFetch":
-        return _webfetch(inputs["url"], inputs.get("prompt"))
+# ── Register built-in tools with the plugin registry ─────────────────────
 
-    elif name == "WebSearch":
-        return _websearch(inputs["query"])
+def _register_builtins() -> None:
+    """Register all 8 built-in tools into the central registry."""
+    _tool_defs = [
+        ToolDef(
+            name="Read",
+            schema=TOOL_SCHEMAS[0],
+            func=lambda p, c: _read(**p),
+            read_only=True,
+            concurrent_safe=True,
+        ),
+        ToolDef(
+            name="Write",
+            schema=TOOL_SCHEMAS[1],
+            func=lambda p, c: _write(**p),
+            read_only=False,
+            concurrent_safe=False,
+        ),
+        ToolDef(
+            name="Edit",
+            schema=TOOL_SCHEMAS[2],
+            func=lambda p, c: _edit(**p),
+            read_only=False,
+            concurrent_safe=False,
+        ),
+        ToolDef(
+            name="Bash",
+            schema=TOOL_SCHEMAS[3],
+            func=lambda p, c: _bash(p["command"], p.get("timeout", 30)),
+            read_only=False,
+            concurrent_safe=False,
+        ),
+        ToolDef(
+            name="Glob",
+            schema=TOOL_SCHEMAS[4],
+            func=lambda p, c: _glob(p["pattern"], p.get("path")),
+            read_only=True,
+            concurrent_safe=True,
+        ),
+        ToolDef(
+            name="Grep",
+            schema=TOOL_SCHEMAS[5],
+            func=lambda p, c: _grep(
+                p["pattern"], p.get("path"), p.get("glob"),
+                p.get("output_mode", "files_with_matches"),
+                p.get("case_insensitive", False),
+                p.get("context", 0),
+            ),
+            read_only=True,
+            concurrent_safe=True,
+        ),
+        ToolDef(
+            name="WebFetch",
+            schema=TOOL_SCHEMAS[6],
+            func=lambda p, c: _webfetch(p["url"], p.get("prompt")),
+            read_only=True,
+            concurrent_safe=True,
+        ),
+        ToolDef(
+            name="WebSearch",
+            schema=TOOL_SCHEMAS[7],
+            func=lambda p, c: _websearch(p["query"]),
+            read_only=True,
+            concurrent_safe=True,
+        ),
+    ]
+    for td in _tool_defs:
+        register_tool(td)
 
-    else:
-        return f"Unknown tool: {name}"
+
+_register_builtins()
+
+
+# ── Memory tools ─────────────────────────────────────────────────────────
+
+from memory import save_memory, delete_memory, MemoryEntry
+from datetime import datetime as _dt
+
+
+def _memory_save(params, config):
+    entry = MemoryEntry(name=params["name"], description=params["description"],
+                        type=params["type"], content=params["content"],
+                        created=_dt.now().strftime("%Y-%m-%d"))
+    save_memory(entry)
+    return f"Memory saved: {entry.name}"
+
+
+def _memory_delete(params, config):
+    delete_memory(params["name"])
+    return f"Memory deleted: {params['name']}"
+
+
+register_tool(ToolDef(
+    name="MemorySave",
+    schema={
+        "name": "MemorySave",
+        "description": "Save a persistent memory entry (markdown file with frontmatter).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name":        {"type": "string", "description": "Human-readable name for the memory"},
+                "type":        {"type": "string", "description": "Category: user, feedback, project, or reference",
+                                "enum": ["user", "feedback", "project", "reference"]},
+                "description": {"type": "string", "description": "Short description of the memory"},
+                "content":     {"type": "string", "description": "Body text of the memory"},
+            },
+            "required": ["name", "type", "description", "content"],
+        },
+    },
+    func=_memory_save,
+    read_only=False,
+    concurrent_safe=False,
+))
+
+register_tool(ToolDef(
+    name="MemoryDelete",
+
+    schema={
+        "name": "MemoryDelete",
+        "description": "Delete a persistent memory entry by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the memory to delete"},
+            },
+            "required": ["name"],
+        },
+    },
+    func=_memory_delete,
+    read_only=False,
+    concurrent_safe=False,
+))
+
+
+# ── Sub-agent tools ─────────────────────────────────────────────────────
+
+_agent_manager = None
+
+
+def _get_agent_manager():
+    global _agent_manager
+    if _agent_manager is None:
+        from subagent import SubAgentManager
+        _agent_manager = SubAgentManager()
+    return _agent_manager
+
+
+def _agent_tool(params, config):
+    mgr = _get_agent_manager()
+    prompt = params["prompt"]
+    wait = params.get("wait", True)
+    system_prompt = config.get("system_prompt", "You are a helpful assistant.")
+    task = mgr.spawn(prompt, config, system_prompt, depth=config.get("_depth", 0))
+    if wait:
+        mgr.wait(task.id, timeout=300)
+        return task.result or f"Task {task.id} finished with status: {task.status}"
+    return f"Task spawned: {task.id} (status: {task.status})"
+
+
+def _check_agent_result(params, config):
+    mgr = _get_agent_manager()
+    task_id = params["task_id"]
+    task = mgr.tasks.get(task_id)
+    if task is None:
+        return f"Error: no task with id '{task_id}'"
+    result_str = f"Status: {task.status}"
+    if task.result:
+        result_str += f"\nResult: {task.result}"
+    return result_str
+
+
+def _list_agent_tasks(params, config):
+    mgr = _get_agent_manager()
+    tasks = mgr.list_tasks()
+    if not tasks:
+        return "No sub-agent tasks."
+    lines = ["ID | Status | Prompt"]
+    lines.append("---|--------|------")
+    for t in tasks:
+        prompt_short = t.prompt[:60] + ("..." if len(t.prompt) > 60 else "")
+        lines.append(f"{t.id} | {t.status} | {prompt_short}")
+    return "\n".join(lines)
+
+
+register_tool(ToolDef(
+    name="Agent",
+    schema={
+        "name": "Agent",
+        "description": (
+            "Spawn a sub-agent to handle a task. The sub-agent runs in a separate "
+            "thread with its own conversation. Use wait=false to run in background."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Task prompt for the sub-agent"},
+                "model":  {"type": "string", "description": "Model override (optional)"},
+                "wait":   {"type": "boolean", "description": "Block until complete (default: true)"},
+            },
+            "required": ["prompt"],
+        },
+    },
+    func=_agent_tool,
+    read_only=False,
+    concurrent_safe=False,
+))
+
+register_tool(ToolDef(
+    name="CheckAgentResult",
+    schema={
+        "name": "CheckAgentResult",
+        "description": "Check the status and result of a spawned sub-agent task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID returned by Agent tool"},
+            },
+            "required": ["task_id"],
+        },
+    },
+    func=_check_agent_result,
+    read_only=True,
+    concurrent_safe=True,
+))
+
+register_tool(ToolDef(
+    name="ListAgentTasks",
+    schema={
+        "name": "ListAgentTasks",
+        "description": "List all sub-agent tasks and their statuses.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    func=_list_agent_tasks,
+    read_only=True,
+    concurrent_safe=True,
+))

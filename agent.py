@@ -5,8 +5,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Generator
 
-from tools import TOOL_SCHEMAS, execute_tool
+from tool_registry import get_tool_schemas
+from tools import execute_tool
+import tools as _tools_init  # ensure built-in tools are registered on import
 from providers import stream, AssistantTurn, TextChunk, ThinkingChunk, detect_provider
+from compaction import maybe_compact
 
 # ── Re-export event types (used by nano_claude.py) ────────────────────────
 __all__ = [
@@ -54,25 +57,39 @@ def run(
     state: AgentState,
     config: dict,
     system_prompt: str,
+    depth: int = 0,
+    cancel_check=None,
 ) -> Generator:
     """
     Multi-turn agent loop (generator).
     Yields: TextChunk | ThinkingChunk | ToolStart | ToolEnd |
             PermissionRequest | TurnDone
+
+    Args:
+        depth: sub-agent nesting depth, 0 for top-level
+        cancel_check: callable returning True to abort the loop early
     """
     # Append user turn in neutral format
     state.messages.append({"role": "user", "content": user_message})
 
+    # Inject depth into config so Agent tool can access it
+    config = {**config, "_depth": depth}
+
     while True:
+        if cancel_check and cancel_check():
+            return
         state.turn_count += 1
         assistant_turn: AssistantTurn | None = None
+
+        # Compact context if approaching window limit
+        maybe_compact(state, config)
 
         # Stream from provider (auto-detected from model name)
         for event in stream(
             model=config["model"],
             system=system_prompt,
             messages=state.messages,
-            tool_schemas=TOOL_SCHEMAS,
+            tool_schemas=get_tool_schemas(),
             config=config,
         ):
             if isinstance(event, (TextChunk, ThinkingChunk)):

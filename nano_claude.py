@@ -26,6 +26,9 @@ Slash commands in REPL:
   /thinking   Toggle extended thinking
   /permissions [mode]  Set permission mode
   /cwd [path] Show or change working directory
+  /memory [query]   Show/search persistent memories
+  /skills           List available skills
+  /agents           Show sub-agent tasks
   /exit /quit Exit
 """
 from __future__ import annotations
@@ -33,13 +36,16 @@ from __future__ import annotations
 import os
 import sys
 import json
-import readline
+try:
+    import readline
+except ImportError:
+    readline = None  # Windows compatibility
 import atexit
 import argparse
 import textwrap
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 # ── Optional rich for markdown rendering ──────────────────────────────────
 try:
@@ -76,6 +82,25 @@ def info(msg: str):   print(clr(msg, "cyan"))
 def ok(msg: str):     print(clr(msg, "green"))
 def warn(msg: str):   print(clr(f"Warning: {msg}", "yellow"))
 def err(msg: str):    print(clr(f"Error: {msg}", "red"), file=sys.stderr)
+
+
+def render_diff(text: str):
+    """Print diff text with ANSI colors: red for removals, green for additions."""
+    for line in text.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            print(C["bold"] + line + C["reset"])
+        elif line.startswith("+"):
+            print(C["green"] + line + C["reset"])
+        elif line.startswith("-"):
+            print(C["red"] + line + C["reset"])
+        elif line.startswith("@@"):
+            print(C["cyan"] + line + C["reset"])
+        else:
+            print(line)
+
+def _has_diff(text: str) -> bool:
+    """Check if text contains a unified diff."""
+    return "--- a/" in text and "+++ b/" in text
 
 
 # ── Conversation rendering ─────────────────────────────────────────────────
@@ -118,6 +143,12 @@ def print_tool_end(name: str, result: str, verbose: bool):
     summary = f"→ {lines} lines ({size} chars)"
     if not result.startswith("Error") and not result.startswith("Denied"):
         print(clr(f"  ✓ {summary}", "dim", "green"), flush=True)
+        # Render diff for Edit/Write results
+        if name in ("Edit", "Write") and _has_diff(result):
+            parts = result.split("\n\n", 1)
+            if len(parts) == 2:
+                print(clr(f"  {parts[0]}", "dim"))
+                render_diff(parts[1])
     else:
         print(clr(f"  ✗ {result[:120]}", "dim", "red"), flush=True)
     if verbose and not result.startswith("Denied"):
@@ -351,6 +382,54 @@ def cmd_exit(_args: str, _state, _config) -> bool:
     ok("Goodbye!")
     sys.exit(0)
 
+def cmd_memory(args: str, _state, _config) -> bool:
+    from memory import load_index, search_memory
+    if args:
+        results = search_memory(args)
+        if not results:
+            info(f"No memories matching '{args}'")
+            return True
+        for m in results:
+            info(f"  [{m.type}] {m.name}: {m.description}")
+            info(f"    {m.content[:100]}{'...' if len(m.content) > 100 else ''}")
+        return True
+    entries = load_index()
+    if not entries:
+        info("No memories stored. The model can save memories via MemorySave tool.")
+        return True
+    info(f"  {len(entries)} memories:")
+    for m in entries:
+        info(f"  [{m.type:9s}] {m.name}: {m.description}")
+    return True
+
+def cmd_agents(_args: str, _state, _config) -> bool:
+    try:
+        from tools import _get_agent_manager
+        mgr = _get_agent_manager()
+        tasks = mgr.list_tasks()
+        if not tasks:
+            info("No sub-agent tasks.")
+            return True
+        info(f"  {len(tasks)} sub-agent tasks:")
+        for t in tasks:
+            preview = t.prompt[:40] + ("..." if len(t.prompt) > 40 else "")
+            info(f"  {t.id} [{t.status:9s}] {preview}")
+    except Exception:
+        info("Sub-agent system not initialized.")
+    return True
+
+def cmd_skills(_args: str, _state, _config) -> bool:
+    from skills import load_skills
+    skills = load_skills()
+    if not skills:
+        info("No skills found.")
+    else:
+        info(f"Loaded skills ({len(skills)}):")
+        for s in skills:
+            triggers = ", ".join(s.triggers)
+            info(f"  {s.name:16s} {s.description}  [{triggers}]")
+    return True
+
 COMMANDS = {
     "help":        cmd_help,
     "clear":       cmd_clear,
@@ -365,13 +444,16 @@ COMMANDS = {
     "thinking":    cmd_thinking,
     "permissions": cmd_permissions,
     "cwd":         cmd_cwd,
+    "skills":      cmd_skills,
+    "memory":      cmd_memory,
+    "agents":      cmd_agents,
     "exit":        cmd_exit,
     "quit":        cmd_exit,
 }
 
 
-def handle_slash(line: str, state, config) -> bool:
-    """Handle /command [args]. Returns True if handled."""
+def handle_slash(line: str, state, config) -> Union[bool, tuple]:
+    """Handle /command [args]. Returns True if handled, tuple (skill, args) for skill match."""
     if not line.startswith("/"):
         return False
     parts = line[1:].split(None, 1)
@@ -383,6 +465,15 @@ def handle_slash(line: str, state, config) -> bool:
     if handler:
         handler(args, state, config)
         return True
+
+    # Fall through to skill lookup
+    from skills import find_skill
+    skill = find_skill(line)
+    if skill:
+        cmd_parts = line.strip().split(maxsplit=1)
+        args = cmd_parts[1] if len(cmd_parts) > 1 else ""
+        return (skill, args)
+
     err(f"Unknown command: /{cmd}  (type /help for commands)")
     return True
 
@@ -390,6 +481,8 @@ def handle_slash(line: str, state, config) -> bool:
 # ── Input history setup ────────────────────────────────────────────────────
 
 def setup_readline(history_file: Path):
+    if readline is None:
+        return
     try:
         readline.read_history_file(str(history_file))
     except FileNotFoundError:
@@ -498,7 +591,17 @@ def repl(config: dict, initial_prompt: str = None):
 
         if not user_input:
             continue
-        if handle_slash(user_input, state, config):
+
+        result = handle_slash(user_input, state, config)
+        if isinstance(result, tuple):
+            skill, args = result
+            info(f"Running skill: {skill.name}")
+            try:
+                run_query(f"[Skill: {skill.name}]\n\n{skill.prompt}\n\nUser context: {args}")
+            except KeyboardInterrupt:
+                print(clr("\n  (interrupted)", "yellow"))
+            continue
+        if result:
             continue
 
         try:

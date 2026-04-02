@@ -24,6 +24,7 @@
 ---
 
 ## 🔥🔥🔥 News (Pacific Time)
+- 10:00 AM, Apr 02, 2026: **v2.0** — Context compression, memory, sub-agents, skills, diff view, tool plugin system (**~3400** lines of Python Code)
 - 01:47 PM, Apr 01, 2026: Support VLLM inference (**~2000** lines of Python Code)
 - 11:30 AM, Apr 01, 2026: Support more **closed-source** models and **open-source models**: Claude, GPT, Gemini, Kimi, Qwen, Zhipu, DeepSeek, and local open-source models via Ollama or any OpenAI-compatible endpoint. (**~1700** lines of Python Code)
 - 09:50 AM, Apr 01, 2026: Support more **closed-source** models: Claude, GPT, Gemini. (**~1300** lines of Python Code)
@@ -40,30 +41,20 @@ A minimal Python implementation of Claude Code in ~900 lines (Initial version), 
 ## Content
   * [Features](#features)
   * [Supported Models](#supported-models)
-    + [Closed-Source (API)](#closed-source--api-)
-    + [Open-Source (Local via Ollama)](#open-source--local-via-ollama-)
   * [Installation](#installation)
   * [Usage: Closed-Source API Models](#usage--closed-source-api-models)
-    + [Anthropic Claude](#anthropic-claude)
-    + [OpenAI GPT](#openai-gpt)
-    + [Google Gemini](#google-gemini)
-    + [Kimi (Moonshot AI)](#kimi--moonshot-ai-)
-    + [Qwen (Alibaba DashScope)](#qwen--alibaba-dashscope-)
-    + [Zhipu GLM](#zhipu-glm)
-    + [DeepSeek](#deepseek)
   * [Usage: Open-Source Models (Local)](#usage--open-source-models--local-)
-    + [Option A — Ollama (Recommended)](#option-a---ollama--recommended-)
-    + [Option B — LM Studio](#option-b---lm-studio)
-    + [Option C — vLLM / Self-Hosted OpenAI-Compatible Server](#option-c---vllm---self-hosted-openai-compatible-server)
   * [Model Name Format](#model-name-format)
   * [CLI Reference](#cli-reference)
   * [Slash Commands (REPL)](#slash-commands--repl-)
   * [Configuring API Keys](#configuring-api-keys)
-    + [Method 1: Environment Variables (recommended)](#method-1--environment-variables--recommended-)
-    + [Method 2: Set Inside the REPL (persisted)](#method-2--set-inside-the-repl--persisted-)
-    + [Method 3: Edit the Config File Directly](#method-3--edit-the-config-file-directly)
   * [Permission System](#permission-system)
   * [Built-in Tools](#built-in-tools)
+  * [Memory](#memory)
+  * [Skills](#skills)
+  * [Sub-Agents](#sub-agents)
+  * [Context Compression](#context-compression)
+  * [Diff View](#diff-view)
   * [CLAUDE.md Support](#claudemd-support)
   * [Session Management](#session-management)
   * [Project Structure](#project-structure)
@@ -79,10 +70,16 @@ A minimal Python implementation of Claude Code in ~900 lines (Initial version), 
 | Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · Ollama · LM Studio · Custom endpoint |
 | Interactive REPL | readline history, Tab-complete slash commands |
 | Agent loop | Streaming API + automatic tool-use loop |
-| 8 built-in tools | Read · Write · Edit · Bash · Glob · Grep · WebFetch · WebSearch |
+| 13 built-in tools | Read · Write · Edit · Bash · Glob · Grep · WebFetch · WebSearch · MemorySave · MemoryDelete · Agent · CheckAgentResult · ListAgentTasks |
+| Diff view | Git-style red/green diff display for Edit and Write |
+| Context compression | Auto-compact long conversations to stay within model limits |
+| Persistent memory | File-based memory system that survives across sessions |
+| Sub-agents | Spawn background agents for parallel task execution |
+| Skills | Reusable prompt templates loaded from markdown files |
+| Plugin tools | Register custom tools via `tool_registry.py` |
 | Permission system | `auto` / `accept-all` / `manual` modes |
-| 14 slash commands | `/model` · `/config` · `/save` · `/cost` · … |
-| Context injection | Auto-loads `CLAUDE.md`, git status, cwd |
+| 17 slash commands | `/model` · `/config` · `/save` · `/cost` · `/memory` · `/skills` · `/agents` · … |
+| Context injection | Auto-loads `CLAUDE.md`, git status, cwd, memory |
 | Session persistence | Save / load conversations to `~/.nano_claude/sessions/` |
 | Extended Thinking | Toggle on/off (Claude models only) |
 | Cost tracking | Token usage + estimated USD cost |
@@ -486,6 +483,10 @@ Type `/` and press **Tab** to autocomplete.
 | `/permissions <mode>` | Set permission mode: `auto` / `accept-all` / `manual` |
 | `/cwd` | Show current working directory |
 | `/cwd <path>` | Change working directory |
+| `/memory` | List all persistent memories |
+| `/memory <query>` | Search memories by keyword |
+| `/skills` | List available skills |
+| `/agents` | Show sub-agent task status |
 | `/exit` / `/quit` | Exit |
 
 **Switching models inside a session:**
@@ -581,16 +582,166 @@ Keys are saved to `~/.nano_claude/config.json` and loaded automatically on next 
 
 ## Built-in Tools
 
+### Core Tools
+
 | Tool | Description | Key Parameters |
 |---|---|---|
 | `Read` | Read file with line numbers | `file_path`, `limit`, `offset` |
-| `Write` | Create or overwrite file | `file_path`, `content` |
-| `Edit` | Exact string replacement in file | `file_path`, `old_string`, `new_string`, `replace_all` |
+| `Write` | Create or overwrite file (shows diff) | `file_path`, `content` |
+| `Edit` | Exact string replacement (shows diff) | `file_path`, `old_string`, `new_string`, `replace_all` |
 | `Bash` | Execute shell command | `command`, `timeout` (default 30s) |
 | `Glob` | Find files by glob pattern | `pattern` (e.g. `**/*.py`), `path` |
 | `Grep` | Regex search in files (uses ripgrep if available) | `pattern`, `path`, `glob`, `output_mode` |
 | `WebFetch` | Fetch and extract text from URL | `url`, `prompt` |
 | `WebSearch` | Search the web via DuckDuckGo | `query` |
+
+### Memory Tools
+
+| Tool | Description | Key Parameters |
+|---|---|---|
+| `MemorySave` | Save a persistent memory | `name`, `type`, `description`, `content` |
+| `MemoryDelete` | Delete a memory by name | `name` |
+
+### Sub-Agent Tools
+
+| Tool | Description | Key Parameters |
+|---|---|---|
+| `Agent` | Spawn a sub-agent for a task | `prompt`, `model` (optional), `wait` (default: true) |
+| `CheckAgentResult` | Check status of a background sub-agent | `task_id` |
+| `ListAgentTasks` | List all sub-agent tasks | — |
+
+> **Adding custom tools:** See [Architecture Guide](docs/architecture.md#tool-registry) for how to register your own tools.
+
+---
+
+## Memory
+
+The model can remember things across conversations using the built-in memory system.
+
+**How it works:** Memories are saved as markdown files in `~/.nano_claude/memory/`. The model sees a summary of all memories in its system prompt and can read, save, or delete them using tools.
+
+**Memory types:**
+
+| Type | Use for |
+|---|---|
+| `user` | Your role, preferences, background |
+| `feedback` | How you want the model to behave |
+| `project` | Ongoing work, deadlines, decisions |
+| `reference` | Links to external resources |
+
+**Example interaction:**
+
+```
+You: Remember that I prefer 4-space indentation and type hints in all Python code.
+AI: [calls MemorySave] Memory saved: coding_style
+
+You: /memory
+  [feedback ] coding_style: Prefers 4-space indent and type hints
+
+You: /memory python
+  [feedback ] coding_style: Prefers 4-space indent and type hints in Python
+```
+
+---
+
+## Skills
+
+Skills are reusable prompt templates that give the model specialized capabilities.
+
+**Quick start:**
+
+```bash
+mkdir -p ~/.nano_claude/skills
+```
+
+Create `~/.nano_claude/skills/commit.md`:
+
+```markdown
+---
+name: commit
+description: Create a git commit with conventional format
+triggers: ["/commit"]
+tools: [Bash, Read]
+---
+
+Analyze staged changes with `git diff --cached`, then create a
+well-formatted commit message following conventional commits.
+Keep the subject under 72 chars. Use imperative mood.
+```
+
+Now use it:
+
+```
+You: /commit
+AI: [reads staged changes, creates commit]
+```
+
+**List skills:** `/skills`
+
+**Skill search paths** (project-level overrides user-level):
+
+```
+./.nano_claude/skills/     # project-level
+~/.nano_claude/skills/     # user-level
+```
+
+---
+
+## Sub-Agents
+
+The model can spawn independent sub-agents to handle tasks in parallel.
+
+```
+You: Search this codebase for all TODO comments and summarize them.
+AI: [calls Agent tool, spawns a sub-agent]
+    Sub-agent reads files, greps for TODOs...
+    Result: Found 12 TODOs across 5 files...
+```
+
+**Async mode** — the model can spawn background agents and check on them later:
+
+```
+AI: [calls Agent(prompt="...", wait=false)]  → task_id: "a1b2c3d4"
+AI: [does other work...]
+AI: [calls CheckAgentResult(task_id="a1b2c3d4")]  → completed
+```
+
+**List running agents:** `/agents`
+
+Sub-agents have independent conversation history, share the file system, and are limited to 3 levels of nesting.
+
+---
+
+## Context Compression
+
+Long conversations are automatically compressed to stay within the model's context window.
+
+**Two layers:**
+
+1. **Snip** — Old tool outputs (file reads, bash results) are truncated after a few turns. Fast, no API cost.
+2. **Auto-compact** — When token usage exceeds 70% of the context limit, older messages are summarized by the model into a concise recap.
+
+This happens transparently. You don't need to do anything.
+
+---
+
+## Diff View
+
+When the model edits or overwrites a file, you see a git-style diff:
+
+```diff
+  Changes applied to config.py:
+
+--- a/config.py
++++ b/config.py
+@@ -12,7 +12,7 @@
+     "model": "claude-opus-4-6",
+-    "max_tokens": 8192,
++    "max_tokens": 16384,
+     "permission_mode": "auto",
+```
+
+Green lines = added, red lines = removed. New file creations show a summary instead.
 
 ---
 
@@ -645,18 +796,23 @@ Sessions are stored as JSON in `~/.nano_claude/sessions/`.
 
 ```
 nano_claude_code/
-├── nano_claude.py   # Entry point: REPL + slash commands + output rendering  (~580 lines)
-├── agent.py         # Agent loop: neutral message format + tool dispatch      (~160 lines)
-├── providers.py     # Multi-provider: adapters + message format conversion    (~480 lines)
-├── tools.py         # 8 tool implementations + JSON schemas                  (~360 lines)
-├── context.py       # System prompt builder: CLAUDE.md + git + cwd           (~100 lines)
-├── config.py        # Config load/save/defaults                               (~70 lines)
-├── demo.py          # Demo script (requires API key)
-├── make_demo.py     # Generates demo.gif and screenshot.png
-├── demo.gif         # Animated demo
-├── screenshot.png   # Static screenshot
-└── requirements.txt
+├── nano_claude.py     # Entry point: REPL + slash commands + diff rendering      (~620 lines)
+├── agent.py           # Agent loop: tool dispatch + compaction + cancellation     (~175 lines)
+├── providers.py       # Multi-provider: streaming adapters + format conversion    (~500 lines)
+├── tools.py           # 13 tool implementations + registry integration           (~610 lines)
+├── tool_registry.py   # Tool plugin registry: register, lookup, execute          (~100 lines)
+├── compaction.py      # Context compression: snip old results + auto-summarize   (~170 lines)
+├── memory.py          # Persistent memory: markdown files + MEMORY.md index      (~180 lines)
+├── subagent.py        # Sub-agent manager: ThreadPoolExecutor + depth control    (~140 lines)
+├── skills.py          # Skill loader: markdown frontmatter + execute via agent   (~130 lines)
+├── context.py         # System prompt builder: CLAUDE.md + git + memory          (~110 lines)
+├── config.py          # Config load/save/defaults                                 (~75 lines)
+├── tests/             # 78 unit tests
+└── docs/
+    └── architecture.md  # Developer guide: module design + extending
 ```
+
+> **For developers:** See [docs/architecture.md](docs/architecture.md) for module design details, dependency graph, and how to extend the system.
 
 ---
 

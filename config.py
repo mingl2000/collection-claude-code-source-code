@@ -16,6 +16,9 @@ DEFAULTS = {
     "thinking":         False,
     "thinking_budget":  10000,
     "custom_base_url":  "",       # for "custom" provider
+    "max_tool_output":  32000,
+    "max_agent_depth":  3,
+    "max_concurrent_agents": 3,
     # Per-provider API keys (optional; env vars take priority)
     # "anthropic_api_key": "sk-ant-..."
     # "openai_api_key":    "sk-..."
