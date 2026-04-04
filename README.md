@@ -233,7 +233,7 @@ cd nano_claude_code
 
 pip install -r requirements.txt
 # or manually:
-pip install anthropic openai httpx rich
+pip install anthropic openai httpx rich sounddevice
 ```
 
 ---
