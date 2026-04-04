@@ -6,7 +6,7 @@
   </a>
 
   
-<h1 align="center" style="font-size: 30px;"><strong><em>Nano Claude Code</em></strong>: A Minimal Python Reimplementation</h1>
+<h1 align="center" style="font-size: 30px;"><strong><em>Nano Claude Code</em></strong>: Nano Claude Code: A Fast, Simple Python Reimplementation Supporting Any Model</h1>
 <p align="center">
     <a href="https://github.com/chauncygu/collection-claude-code-source-code">The newest source of Claude Code</a>
     ·
@@ -40,7 +40,7 @@
 
 # Nano Claude Code
 
-A minimal Python implementation of Claude Code in ~900 lines (Initial version), **supporting Claude, GPT, Gemini, Kimi, Qwen, Zhipu, DeepSeek, and local open-source models via Ollama or any OpenAI-compatible endpoint.**
+A minimal Python implementation of Claude Code in ~900 lines (Initial version), **supporting any model, such as Claude, GPT, Gemini, Kimi, Qwen, Zhipu, DeepSeek, and local open-source models via Ollama or any OpenAI-compatible endpoint.**
 
 ---
 
