@@ -41,11 +41,12 @@
 
 # Nano Claude Code
 
-A minimal Python Implementation of Claude Code in ~900 lines (Initial version), **supporting any model, such as Claude, GPT, Gemini, Kimi, Qwen, Zhipu, DeepSeek, and local open-source models via Ollama or any OpenAI-compatible endpoint.**
+Nano Claude Code: **A Lightweight** and **Easy-to-Use** Python Reimplementation of Claude Code **Supporting Any Model**, such as Claude, GPT, Gemini, Kimi, Qwen, Zhipu, DeepSeek, and local open-source models via Ollama or any OpenAI-compatible endpoint.
 
 ---
 
 ## Content
+  * [Why Nano Claude Code](#why-nano-claude-code)
   * [Features](#features)
   * [Supported Models](#supported-models)
   * [Installation](#installation)
@@ -73,6 +74,71 @@ A minimal Python Implementation of Claude Code in ~900 lines (Initial version), 
 
 
 
+
+## Why Nano Claude Code
+
+Claude Code is a powerful, production-grade AI coding assistant — but its source code is a compiled, 12 MB TypeScript/Node.js bundle (~1,300 files, ~283K lines). It is tightly coupled to the Anthropic API, hard to modify, and impossible to run against a local or alternative model.
+
+**Nano Claude Code** reimplements the same core loop in ~10K lines of readable Python, keeping everything you need and dropping what you don't.
+
+### At a glance
+
+| Dimension | Claude Code (TypeScript) | Nano Claude Code (Python) |
+|-----------|--------------------------|---------------------------|
+| Language | TypeScript + React/Ink | Python 3.8+ |
+| Source files | ~1,332 TS/TSX files | 51 Python files |
+| Lines of code | ~283K | ~10.2K |
+| Built-in tools | 44+ | 21 |
+| Slash commands | 88 | 17 |
+| Model providers | Anthropic only | 7+ (Anthropic · OpenAI · Gemini · Kimi · Qwen · DeepSeek · Ollama · …) |
+| Local models | No | Yes — Ollama, LM Studio, vLLM, any OpenAI-compatible endpoint |
+| Build step required | Yes (Bun + esbuild) | No — run directly with `python nano_claude.py` |
+| Runtime extensibility | Closed (compile-time) | Open — `register_tool()` at runtime, Markdown skills, git plugins |
+| Task dependency graph | No | Yes — `blocks` / `blocked_by` edges in `task/` package |
+
+### Where Claude Code wins
+
+- **UI quality** — React/Ink component tree with streaming rendering, fine-grained diff visualization, and dialog systems.
+- **Tool breadth** — 44 tools including `NotebookEdit`, `LSP Diagnostics`, `RemoteTrigger`, `EnterWorktree`, and more.
+- **Enterprise features** — MDM-managed config, team permission sync, OAuth, keychain storage, GrowthBook feature flags.
+- **AI-driven memory extraction** — `extractMemories` service proactively extracts knowledge from conversations without explicit tool calls.
+- **Production reliability** — single distributable `cli.js`, comprehensive test coverage, version-locked releases.
+
+### Where Nano Claude Code wins
+
+- **Multi-provider** — switch between Claude, GPT-4o, Gemini 2.5 Pro, DeepSeek, Qwen, or a local Llama model with `--model` or `/model` — no recompile needed.
+- **Local model support** — run entirely offline with Ollama, LM Studio, or any vLLM-hosted model.
+- **Readable source** — the full agent loop is 174 lines (`agent.py`). Any Python developer can read, fork, and extend it in minutes.
+- **Zero build** — `pip install -r requirements.txt` and you're running. Changes take effect immediately.
+- **Dynamic extensibility** — register new tools at runtime with `register_tool(ToolDef(...))`, install skill packs from git URLs, or wire in any MCP server.
+- **Task dependency graph** — `TaskCreate` / `TaskUpdate` support `blocks` / `blocked_by` edges for structured multi-step planning (not available in Claude Code).
+- **Two-layer context compression** — rule-based snip + AI summarization, configurable via `preserve_last_n_turns`.
+
+### Key design differences
+
+**Agent loop** — Nano uses a Python generator that `yield`s typed events (`TextChunk`, `ToolStart`, `ToolEnd`, `TurnDone`). The entire loop is visible in one file, making it easy to add hooks, custom renderers, or logging.
+
+**Tool registration** — every tool is a `ToolDef(name, schema, func, read_only, concurrent_safe)` dataclass. Any module can call `register_tool()` at import time; MCP servers, plugins, and skills all use the same mechanism.
+
+**Context compression**
+
+| | Claude Code | Nano Claude Code |
+|-|-------------|-----------------|
+| Trigger | Exact token count | `len / 3.5` estimate, fires at 70 % |
+| Layer 1 | — | Snip: truncate old tool outputs (no API cost) |
+| Layer 2 | AI summarization | AI summarization of older turns |
+| Control | System-managed | `preserve_last_n_turns` parameter |
+
+**Memory** — Claude Code's `extractMemories` service has the model proactively surface facts. Nano's `memory/` package is tool-driven: the model calls `MemorySave` explicitly, which is more predictable and auditable.
+
+### Who should use Nano Claude Code
+
+- Developers who want to **use a local or non-Anthropic model** as their coding assistant.
+- Researchers studying **how agentic coding assistants work** — the entire system fits in one screen.
+- Teams who need a **hackable baseline** to add proprietary tools, custom permission policies, or specialised agent types.
+- Anyone who wants Claude Code-style productivity **without a Node.js build chain**.
+
+---
 
 ## Features
 
