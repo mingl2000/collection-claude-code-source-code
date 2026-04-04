@@ -6,7 +6,7 @@ This change adds a lightweight autosave + resume flow so users can continue thei
 
 ## What was added
 
-- New autosave function: `cmd_save_2(args, state, _config)`
+- New autosave function: `save_latest(args, state, _config)`
   - File: `nano_claude.py`
   - Saves to: `MR_SESSION_DIR / "session_lastest.json"`
   - Ensures parent directory exists:
@@ -33,12 +33,12 @@ This change adds a lightweight autosave + resume flow so users can continue thei
 Autosave now runs on abrupt prompt exit in the main REPL loop:
 
 - On `EOFError` / `KeyboardInterrupt` while waiting for input:
-  - Calls `cmd_save_2("", state, config)`
+  - Calls `save_latest("", state, config)`
   - Then exits cleanly.
 
 Also on explicit command exit:
 
-- `/exit` and `/quit` (`cmd_exit`) call `cmd_save_2("", _state, _config)` before `sys.exit(0)`.
+- `/exit` and `/quit` (`cmd_exit`) call `save_latest("", _state, _config)` before `sys.exit(0)`.
 
 ## Slash dispatch flow
 

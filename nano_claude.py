@@ -300,7 +300,7 @@ def cmd_save(args: str, state, _config) -> bool:
     ok(f"Session saved to {path}")
     return True
 
-def cmd_save_2(args: str, state, _config) -> bool:
+def save_latest(args: str, state, _config) -> bool:
     from config import MR_SESSION_DIR
     fname = "session_lastest.json"
     path = Path(fname) if "/" in fname else MR_SESSION_DIR / fname
@@ -462,7 +462,7 @@ def cmd_cwd(args: str, _state, _config) -> bool:
 
 def cmd_exit(_args: str, _state, _config) -> bool:
     ok("Goodbye!")
-    cmd_save_2("", _state, _config)  # auto-save to mr_sessions for easy resuming
+    save_latest("", _state, _config)  # auto-save to mr_sessions for easy resuming
     sys.exit(0)
 
 def cmd_memory(args: str, _state, _config) -> bool:
@@ -1170,7 +1170,7 @@ def repl(config: dict, initial_prompt: str = None):
         except (EOFError, KeyboardInterrupt):
             print()
             try:
-                cmd_save_2("", state, config)
+                save_latest("", state, config)
             except Exception as e:
                 warn(f"Auto-save failed on exit: {e}")
             ok("Goodbye!")
