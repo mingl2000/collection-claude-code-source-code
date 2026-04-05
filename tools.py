@@ -376,17 +376,25 @@ def _edit(file_path: str, old_string: str, new_string: str, replace_all: bool = 
     if not p.exists():
         return f"Error: file not found: {file_path}"
     try:
-        content = p.read_text()
-        count = content.count(old_string)
+        content = p.read_text(encoding="utf-8", errors="replace")
+        
+        # Normalize line endings to avoid \r\n vs \n mismatch on Windows
+        content_norm = content.replace("\r\n", "\n")
+        old_norm = old_string.replace("\r\n", "\n")
+        new_norm = new_string.replace("\r\n", "\n")
+        
+        count = content_norm.count(old_norm)
         if count == 0:
-            return "Error: old_string not found in file"
+            return "Error: old_string not found in file. Please ensure EXACT match, including all exact leading spaces/indentation and trailing newlines."
         if count > 1 and not replace_all:
             return (f"Error: old_string appears {count} times. "
                     "Provide more context to make it unique, or use replace_all=true.")
-        old_content = content
-        new_content = content.replace(old_string, new_string) if replace_all else \
-                      content.replace(old_string, new_string, 1)
-        p.write_text(new_content)
+                    
+        old_content = content_norm
+        new_content = content_norm.replace(old_norm, new_norm) if replace_all else \
+                      content_norm.replace(old_norm, new_norm, 1)
+                      
+        p.write_text(new_content, encoding="utf-8")
         filename = p.name
         diff = generate_unified_diff(old_content, new_content, filename)
         return f"Changes applied to {filename}:\n\n{diff}"
